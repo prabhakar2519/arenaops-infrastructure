@@ -1,0 +1,65 @@
+name: arenaops-infrastructure
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ARENA_DB_NAME:?ARENA_DB_NAME is required}
+      POSTGRES_USER: ${ARENA_DB_USERNAME:?ARENA_DB_USERNAME is required}
+      POSTGRES_PASSWORD: ${ARENA_DB_PASSWORD:?ARENA_DB_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [arenaops]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5.3
+    command: start --http-enabled=true --http-relative-path=/auth --proxy-headers=xforwarded
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${ARENA_DB_NAME:?ARENA_DB_NAME is required}
+      KC_DB_USERNAME: ${ARENA_DB_USERNAME:?ARENA_DB_USERNAME is required}
+      KC_DB_PASSWORD: ${ARENA_DB_PASSWORD:?ARENA_DB_PASSWORD is required}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?KEYCLOAK_ADMIN_USER is required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
+      KC_HOSTNAME: https://${ARENAOPS_DOMAIN:?ARENAOPS_DOMAIN is required}/auth
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+    volumes:
+      - ../keycloak/themes:/opt/keycloak/themes:ro
+    ports:
+      - "127.0.0.1:9091:8080"
+    networks: [arenaops]
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      ARENAOPS_DOMAIN: ${ARENAOPS_DOMAIN:?ARENAOPS_DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [arenaops]
+
+networks:
+  arenaops:
+    name: arenaops
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

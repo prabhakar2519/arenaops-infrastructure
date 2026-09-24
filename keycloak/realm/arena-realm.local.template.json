@@ -1,0 +1,70 @@
+{
+  "realm": "arena",
+  "loginTheme": "arena-login",
+  "enabled": true,
+  "registrationAllowed": true,
+  "resetPasswordAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      {
+        "name": "OWNER",
+        "description": "Sports club owner"
+      },
+      {
+        "name": "STAFF",
+        "description": "Sports club staff"
+      },
+      {
+        "name": "ADMIN",
+        "description": "ArenaOps administrator"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "arena-bff",
+      "name": "ArenaOps BFF Admin",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "**********",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "arena-ui",
+      "name": "ArenaOps UI",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:4200/login/callback",
+        "http://localhost:4201/login/callback",
+        "http://127.0.0.1:4200/login/callback",
+        "http://127.0.0.1:4201/login/callback",
+        "http://192.168.0.219:4200/login/callback",
+        "http://192.168.0.219:4201/login/callback",
+        "https://arenaops.in/login/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:4200",
+        "http://localhost:4201",
+        "http://127.0.0.1:4200",
+        "http://127.0.0.1:4201",
+        "http://192.168.0.219:4200",
+        "http://192.168.0.219:4201",
+        "https://arenaops.in"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://127.0.0.1:4200/##http://127.0.0.1:4201/##http://192.168.0.219:4200/##http://192.168.0.219:4201/##http://localhost:4200/##http://localhost:4201/##https://arenaops.in/"
+      }
+    }
+  ],
+  "users": [],
+  "smtpServer": {}
+}

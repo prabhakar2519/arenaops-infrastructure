@@ -1,0 +1,72 @@
+name: ArenaOps Infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Validate configuration or apply it to production
+        required: true
+        type: choice
+        default: validate
+        options: [validate, apply]
+      confirmation:
+        description: Type APPLY when operation is apply
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell scripts
+        run: bash -n scripts/*.sh
+      - name: Validate realm templates
+        run: jq empty keycloak/realm/*.json
+      - name: Validate Compose
+        env:
+          ARENA_DB_NAME: arena
+          ARENA_DB_USERNAME: validation
+          ARENA_DB_PASSWORD: validation
+          KEYCLOAK_ADMIN_USER: validation
+          KEYCLOAK_ADMIN_PASSWORD: validation
+          ARENAOPS_DOMAIN: example.invalid
+        run: docker compose -f docker/docker-compose.infra.yaml config --quiet
+
+  apply-production:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply' && inputs.confirmation == 'APPLY'
+    runs-on: ubuntu-latest
+    environment: production-infrastructure
+    concurrency:
+      group: arenaops-production-infrastructure
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy infrastructure configuration
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "docker,keycloak,scripts"
+          target: "/tmp/arenaops-infrastructure"
+      - name: Apply infrastructure
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /tmp/arenaops-infrastructure
+            chmod +x scripts/*.sh
+            sudo ./scripts/prepare-vps.sh
+            rsync -a --delete docker keycloak scripts /opt/arenaops/infra/
+            cd /opt/arenaops/infra
+            ./scripts/apply-infrastructure.sh

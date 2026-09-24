@@ -1,0 +1,11 @@
+{$ARENAOPS_DOMAIN} {
+  encode zstd gzip
+
+  handle /auth/* {
+    reverse_proxy keycloak:8080
+  }
+
+  handle {
+    reverse_proxy arena-ui:80
+  }
+}
