@@ -7,7 +7,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 edge_dir=/opt/arenaops/edge
 exec 9>"$edge_dir/apply.lock"
 flock 9
-for network in arenaops-sit arenaops-prod; do docker network inspect "$network" >/dev/null; done
+"$root_dir/scripts/ensure-networks.sh" edge
 compose_file="$root_dir/docker/docker-compose.edge.yaml"
 docker compose --env-file /dev/null -p arenaops-edge -f "$compose_file" config --quiet
 docker compose --env-file /dev/null -p arenaops-edge -f "$compose_file" run --rm --no-deps caddy \

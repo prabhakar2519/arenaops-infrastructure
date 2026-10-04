@@ -60,7 +60,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - name: Transfer configuration and temporary secrets; apply selected environment
+      # deploy-from-actions invokes prepare-vps before remote-apply. The apply
+      # entrypoints ensure/inspect their external networks before Compose.
+      - name: Bootstrap VPS networks, then apply infrastructure and shared edge
         shell: bash
         env:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}

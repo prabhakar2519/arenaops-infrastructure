@@ -13,8 +13,6 @@ deployment_user="${SUDO_USER:-$(id -un)}"
 deployment_group="$(id -gn "$deployment_user")"
 install -d -o "$deployment_user" -g "$deployment_group" -m 0750 \
   /opt/arenaops "/opt/arenaops/$environment" "/opt/arenaops/$environment/state" /opt/arenaops/edge /opt/arenaops/edge/docker
-# Both networks must exist for the shared edge, even before the second environment is applied.
-for network in arenaops-sit arenaops-prod; do
-  docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
-done
-echo "$environment directories and shared-edge networks are ready"
+# Bootstrap the selected environment before any environment Compose operation.
+bash "$(dirname "${BASH_SOURCE[0]}")/ensure-networks.sh" "$environment"
+echo "$environment directories and prerequisite network are ready"

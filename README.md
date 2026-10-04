@@ -31,6 +31,7 @@ scripts/
   config.py
   write-runtime-env.py
   prepare-vps.sh
+  ensure-networks.sh
   remote-apply.sh
   deploy-from-actions.sh
   apply-infrastructure.sh
@@ -104,22 +105,15 @@ Deployment writes SSH key, known-hosts and runtime env files under runner `/dev/
 
 ## SIT deployment: exact first deployment steps
 
-1. Review and merge this change. Install Docker Engine, Compose supporting `up --wait`, Python 3, curl, jq and tar on the SIT VPS. Ensure the deployment account can access Docker and prepare `/opt/arenaops` through reviewed noninteractive sudo.
+1. Review and merge this change. Install Docker Engine, Compose supporting `up --wait`, Python 3, curl, jq, tar and flock on the shared VPS. Ensure the deployment account can access Docker and prepare `/opt/arenaops` through reviewed noninteractive sudo.
 2. Point `sit.arenaops.in` DNS at the SIT VPS bind IP. Permit inbound TCP 80/443 and restrict SSH to operators. PostgreSQL and Keycloak host ports must remain private. Publish no IPv6 DNS record unless IPv6 exposure is configured separately.
 3. Configure `sit-infrastructure` with the ten secret names above and its `CADDY_BIND_IP` variable. Ensure credentials differ from PROD.
 4. In GitHub Actions → **ArenaOps Infrastructure** → **Run workflow**, select the reviewed branch, environment **sit**, operation **validate**, and run. This validates all three configurations without SSH or deployment.
 5. Review backups/migration needs and the validation result. Run the workflow again with environment **sit**, operation **apply**, confirmation **APPLY**. Complete any Environment approval.
-6. The workflow prepares `/opt/arenaops/sit`, `/opt/arenaops/edge` and both networks `arenaops-sit` / `arenaops-prod`, transfers repository files, starts and waits for PostgreSQL/Keycloak, bootstraps `arena-sit`, applies the shared Caddy project and marks `/opt/arenaops/sit/state/sit-infrastructure-applied` after health checks pass.
+6. The workflow transfers repository files, prepares `/opt/arenaops/sit`, `/opt/arenaops/edge` and `arenaops-sit`, ensures both edge networks before Compose, starts and waits for PostgreSQL/Keycloak, bootstraps `arena-sit`, applies the shared Caddy project and marks `/opt/arenaops/sit/state/sit-infrastructure-applied` after health checks pass.
 7. Inspect the public realm discovery URL `https://sit.arenaops.in/auth/realms/arena-sit/.well-known/openid-configuration`. Requests under `/auth/admin` and `/auth/realms/master` must return 404. The application routes return 502 until the SIT application stack is attached.
 
-For approved operator-driven application of an already copied checkout, the equivalent remote command is:
-
-```bash
-sudo bash /opt/arenaops/sit/scripts/prepare-vps.sh sit
-ARENAOPS_INFRA_ENV_FILE=/dev/shm/operator-runtime.env \
-  bash /opt/arenaops/sit/scripts/apply-infrastructure.sh
-# Operator is responsible for mode 0600 and cleanup of this manually created file.
-```
+Network preparation is automatic within the workflow; no manual bootstrap or Docker network command is required.
 
 The application repository uses projects `arenaops-sit-app` and `arenaops-prod-app`, environment-specific paths and credentials, and the corresponding single external network. Its explicit aliases are `<env>-arena-ui`, `<env>-arena-login`, and `<env>-arena-core`; internal Keycloak/database calls use `<env>-keycloak` and `<env>-postgres`. Publish no application ports. Keycloak and application database/schema provisioning remains an operator prerequisite.
 
@@ -129,7 +123,7 @@ Prepare its own VPS/bind IP and DNS `arenaops.in`, configure `production-infrast
 
 ## Networks, persistence and Caddy
 
-`prepare-vps.sh sit|prod` creates the selected environment directories plus `/opt/arenaops/edge/docker` and both external networks. It stores no credentials. DEV remains separate on `arenaops-dev`. Only Caddy joins both SIT and PROD networks; environment services each join exactly one.
+`prepare-vps.sh sit|prod` creates the selected environment directories plus `/opt/arenaops/edge/docker` and the selected external network. `ensure-networks.sh sit|prod` inspects and creates only that environment network; the infrastructure apply ensures both networks before its Caddy preflight, and `apply-edge.sh` independently ensures both before its first Compose command. It stores no credentials. DEV remains separate on `arenaops-dev`. Only Caddy joins both SIT and PROD networks; environment services each join exactly one.
 
 ```text
 Internet -> arenaops-edge-caddy :80/:443 (project arenaops-edge)
@@ -189,3 +183,11 @@ The test suite executes `docker compose ... config --format json` with dummy val
 Rollback code/config to a reviewed prior version and reapply **the same environment** with temporary secrets. Take environment-specific PostgreSQL backups first; a code rollback does not undo realm/database mutations. Do not attach the old shared volume to either new environment without a reviewed migration and backup. Existing `/opt/arenaops/infra`, shared `arenaops` network, old state markers and persistent env files are not automatically migrated or removed; review and retire them separately after securing backups. Existing services may occupy ports 80/443 and must be handled before a new apply.
 
 Implementation references: [Keycloak container health checks](https://www.keycloak.org/observability/health), [Keycloak management interface](https://www.keycloak.org/server/management-interface), [Caddy matchers](https://caddyserver.com/docs/caddyfile/matchers), and [Caddy reverse proxy forwarding](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+
+## Fresh VPS network bootstrap
+
+No manual Docker network commands are required. The infrastructure workflow calls `deploy-from-actions.sh`, which transfers configuration and runs `prepare-vps.sh sit|prod` before the remote apply. That preparation calls `ensure-networks.sh` for the selected environment. `apply-infrastructure.sh` repeats the selected prerequisite check and ensures both networks before any shared-edge Compose preflight, starts PostgreSQL/Keycloak, then calls `apply-edge.sh` to start/reload Caddy. The edge entrypoint independently ensures both networks before Compose.
+
+Each check runs `docker network inspect arenaops-sit` or `docker network inspect arenaops-prod`. Only a missing network triggers `docker network create --driver bridge <name>`; inspection is repeated to verify success. An existing network is preserved. Concurrent creation is accepted only when a follow-up inspection succeeds; genuine Docker errors abort deployment. No bootstrap code deletes networks or changes their existing configuration.
+
+A VPS with Docker/Compose, required host tools, SSH access and GitHub environment credentials can follow this pipeline with zero pre-existing ArenaOps networks. The scripts create the directories and network prerequisites automatically. Validation uses a fake Docker command to exercise missing, existing, failed and concurrently created networks without touching a VPS. Compose tests still verify that only Caddy attaches to both environments, PostgreSQL has no public ports, and Keycloak administration ports bind to loopback. DNS/TLS and real login remain post-deployment checks.

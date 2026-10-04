@@ -10,15 +10,15 @@ if [[ "$ARENA_ENV" != dev && "$root_dir" != "$ARENAOPS_TARGET" ]]; then
   echo 'Unexpected deployment directory' >&2
   exit 1
 fi
+# External networks must exist before any Compose configuration/run/up command.
+"$root_dir/scripts/ensure-networks.sh" "$ARENA_ENV"
+if [[ "$ARENA_ENV" != dev ]]; then
+  "$root_dir/scripts/ensure-networks.sh" edge
+fi
 compose config --quiet
 # Validate proxy before making infrastructure changes. No ports are published by run.
 if [[ "$ARENA_ENV" != dev ]]; then
   docker compose --env-file /dev/null -p arenaops-edge -f "$root_dir/docker/docker-compose.edge.yaml" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
-fi
-if [[ "$ARENA_ENV" == dev ]]; then
-  docker network inspect "$ARENAOPS_NETWORK" >/dev/null 2>&1 || docker network create "$ARENAOPS_NETWORK" >/dev/null
-else
-  docker network inspect "$ARENAOPS_NETWORK" >/dev/null
 fi
 compose up -d --wait --wait-timeout 360 postgres keycloak
 "$root_dir/scripts/bootstrap-keycloak.sh" "$root_dir/keycloak/realm/arena-realm.$ARENA_ENV.template.json"
