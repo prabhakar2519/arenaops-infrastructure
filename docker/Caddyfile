@@ -16,7 +16,10 @@ sit.arenaops.in {
 		@private_auth path /auth /auth/* /health /health/* /metrics /metrics/* /admin /admin/* /management /management/*
 		respond @private_auth 404
 		@api path /api /api/*
-		reverse_proxy @api sit-arena-login:7700
+		handle @api {
+			uri strip_prefix /api
+			reverse_proxy sit-arena-login:7700
+		}
 		reverse_proxy sit-arena-ui:80
 	}
 }
@@ -28,7 +31,10 @@ arenaops.in {
 		@private_auth path /auth /auth/* /health /health/* /metrics /metrics/* /admin /admin/* /management /management/*
 		respond @private_auth 404
 		@api path /api /api/*
-		reverse_proxy @api prod-arena-login:7700
+		handle @api {
+			uri strip_prefix /api
+			reverse_proxy prod-arena-login:7700
+		}
 		reverse_proxy prod-arena-ui:80
 	}
 }

@@ -45,7 +45,14 @@ for environment in sit prod; do
   case "$environment" in sit) host=sit.arenaops.in; realm=arena-sit; other=arena ;; prod) host=arenaops.in; realm=arena; other=arena-sit ;; esac
   check "$host" / "$environment-ui"
   check "$host" /api "$environment-login"
-  check "$host" /api/test "$environment-login"
+  check "$host" /api/ "$environment-login"
+  check "$host" '/api/test?probe=1' "$environment-login"
+  grep -q '^GET / HTTP/1.1' "/tmp/$environment-login.requests"
+  grep -q '^GET /test?probe=1 HTTP/1.1' "/tmp/$environment-login.requests"
+  if grep -q '^GET /api' "/tmp/$environment-login.requests"; then
+    echo 'BFF received an unstripped API prefix' >&2; exit 1
+  fi
+  check "$host" /apiary "$environment-ui"
   check "$host" "/auth/realms/$realm" "$environment-keycloak"
   check "$host" "/auth/realms/$realm/.well-known/openid-configuration" "$environment-keycloak"
   check "$host" /auth/resources/test/theme.css "$environment-keycloak"
@@ -56,5 +63,5 @@ for environment in sit prod; do
   grep -qi "X-Forwarded-Host: $host" "/tmp/$environment-keycloak.requests"
   grep -qi 'X-Forwarded-Proto: http' "/tmp/$environment-keycloak.requests"
 done
-echo 'Both hostnames: correct distinct upstreams, realm allowlists, private-path blocking, security and forwarded headers passed.'
+echo 'Both hostnames: correct distinct upstreams, realm allowlists, private-path blocking, API prefix stripping, security and forwarded headers passed.'
 TEST
