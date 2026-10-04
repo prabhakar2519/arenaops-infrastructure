@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+*.log
+.bootstrap-complete
+implementation_plan/
+__pycache__/
+
+# Local documentation, editor metadata and generated files.
+/docs/
+.DS_Store
+.idea/
+*.code-workspace
+*.pyc

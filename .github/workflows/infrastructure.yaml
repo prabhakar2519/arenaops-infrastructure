@@ -1,0 +1,80 @@
+name: ArenaOps Infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Infrastructure target (SIT first)
+        required: true
+        type: choice
+        default: sit
+        options: [sit, production]
+      operation:
+        description: Validate or apply infrastructure
+        required: true
+        type: choice
+        default: validate
+        options: [validate, apply]
+      confirmation:
+        description: Type APPLY when operation is apply
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check apply confirmation
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          OPERATION: ${{ inputs.operation }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [[ "$OPERATION" == apply && "$CONFIRMATION" != APPLY ]]; then
+            echo 'Apply requires confirmation APPLY' >&2
+            exit 1
+          fi
+      - name: Validate scripts, realms and all environments
+        run: ./scripts/validate.sh
+      - name: Lint workflow and shell scripts
+        run: |
+          docker run --rm --network none --entrypoint sh \
+            -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7 \
+            -c 'actionlint .github/workflows/infrastructure.yaml && shellcheck -x scripts/*.sh'
+      - name: Validate Caddy with dummy configuration
+        run: ./scripts/validate-caddy.sh
+
+  apply:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply' && inputs.confirmation == 'APPLY'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'sit' && 'sit-infrastructure' || 'production-infrastructure' }}
+    concurrency:
+      group: arenaops-shared-vps-infrastructure
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      # deploy-from-actions invokes prepare-vps before remote-apply. The apply
+      # entrypoints ensure/inspect their external networks before Compose.
+      - name: Bootstrap VPS networks, then apply infrastructure and shared edge
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_HOST_KEY: ${{ secrets.VPS_SSH_HOST_KEY }}
+          CADDY_BIND_IP: ${{ vars.CADDY_BIND_IP }}
+          ARENA_DB_NAME: ${{ secrets.ARENA_DB_NAME }}
+          ARENA_DB_USERNAME: ${{ secrets.ARENA_DB_USERNAME }}
+          ARENA_DB_PASSWORD: ${{ secrets.ARENA_DB_PASSWORD }}
+          KC_ADMIN_USERNAME: ${{ secrets.KC_ADMIN_USERNAME }}
+          KC_ADMIN_PASSWORD: ${{ secrets.KC_ADMIN_PASSWORD }}
+          KC_BFF_CLIENT_SECRET: ${{ secrets.KC_BFF_CLIENT_SECRET }}
+        run: ./scripts/deploy-from-actions.sh

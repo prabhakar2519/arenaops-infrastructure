@@ -1,0 +1,60 @@
+{
+  "realm": "arena",
+  "loginTheme": "arena-login",
+  "enabled": true,
+  "registrationAllowed": true,
+  "resetPasswordAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "sslRequired": "external",
+  "roles": {
+    "realm": [
+      {
+        "name": "OWNER",
+        "description": "Sports club owner"
+      },
+      {
+        "name": "STAFF",
+        "description": "Sports club staff"
+      },
+      {
+        "name": "ADMIN",
+        "description": "ArenaOps administrator"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "arena-bff",
+      "name": "ArenaOps BFF Admin",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "arena-ui",
+      "name": "ArenaOps UI",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://arenaops.in/login/callback"
+      ],
+      "webOrigins": [
+        "https://arenaops.in"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://arenaops.in/",
+        "pkce.code.challenge.method": "S256"
+      },
+      "rootUrl": "https://arenaops.in",
+      "baseUrl": "https://arenaops.in"
+    }
+  ],
+  "users": [],
+  "smtpServer": {}
+}
