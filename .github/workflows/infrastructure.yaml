@@ -5,8 +5,14 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      environment:
+        description: Infrastructure target (SIT first)
+        required: true
+        type: choice
+        default: sit
+        options: [sit, production]
       operation:
-        description: Validate configuration or apply it to production
+        description: Validate or apply infrastructure
         required: true
         type: choice
         default: validate
@@ -24,49 +30,49 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate shell scripts
-        run: bash -n scripts/*.sh
-      - name: Validate realm templates
-        run: jq empty keycloak/realm/*.json
-      - name: Validate Compose
+      - name: Check apply confirmation
+        if: github.event_name == 'workflow_dispatch'
         env:
-          ARENA_DB_NAME: arena
-          ARENA_DB_USERNAME: validation
-          ARENA_DB_PASSWORD: validation
-          KEYCLOAK_ADMIN_USER: validation
-          KEYCLOAK_ADMIN_PASSWORD: validation
-          ARENAOPS_DOMAIN: example.invalid
-        run: docker compose -f docker/docker-compose.infra.yaml config --quiet
+          OPERATION: ${{ inputs.operation }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [[ "$OPERATION" == apply && "$CONFIRMATION" != APPLY ]]; then
+            echo 'Apply requires confirmation APPLY' >&2
+            exit 1
+          fi
+      - name: Validate scripts, realms and all environments
+        run: ./scripts/validate.sh
+      - name: Lint workflow and shell scripts
+        run: |
+          docker run --rm --network none --entrypoint sh \
+            -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7 \
+            -c 'actionlint .github/workflows/infrastructure.yaml && shellcheck -x scripts/*.sh'
+      - name: Validate Caddy with dummy configuration
+        run: ./scripts/validate-caddy.sh
 
-  apply-production:
+  apply:
     needs: validate
     if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply' && inputs.confirmation == 'APPLY'
     runs-on: ubuntu-latest
-    environment: production-infrastructure
+    environment: ${{ inputs.environment == 'sit' && 'sit-infrastructure' || 'production-infrastructure' }}
     concurrency:
-      group: arenaops-production-infrastructure
+      group: arenaops-${{ inputs.environment }}-infrastructure
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - name: Copy infrastructure configuration
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "docker,keycloak,scripts"
-          target: "/tmp/arenaops-infrastructure"
-      - name: Apply infrastructure
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd /tmp/arenaops-infrastructure
-            chmod +x scripts/*.sh
-            sudo ./scripts/prepare-vps.sh
-            rsync -a --delete docker keycloak scripts /opt/arenaops/infra/
-            cd /opt/arenaops/infra
-            ./scripts/apply-infrastructure.sh
+      - name: Transfer configuration and temporary secrets; apply selected environment
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_HOST_KEY: ${{ secrets.VPS_SSH_HOST_KEY }}
+          CADDY_BIND_IP: ${{ vars.CADDY_BIND_IP }}
+          ARENA_DB_NAME: ${{ secrets.ARENA_DB_NAME }}
+          ARENA_DB_USERNAME: ${{ secrets.ARENA_DB_USERNAME }}
+          ARENA_DB_PASSWORD: ${{ secrets.ARENA_DB_PASSWORD }}
+          KC_ADMIN_USERNAME: ${{ secrets.KC_ADMIN_USERNAME }}
+          KC_ADMIN_PASSWORD: ${{ secrets.KC_ADMIN_PASSWORD }}
+          KC_BFF_CLIENT_SECRET: ${{ secrets.KC_BFF_CLIENT_SECRET }}
+        run: ./scripts/deploy-from-actions.sh

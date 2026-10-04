@@ -30,7 +30,6 @@
       "name": "ArenaOps BFF Admin",
       "enabled": true,
       "publicClient": false,
-      "secret": "**********",
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false
@@ -49,7 +48,8 @@
         "https://arenaops.in"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "https://arenaops.in/"
+        "post.logout.redirect.uris": "https://arenaops.in/",
+        "pkce.code.challenge.method": "S256"
       },
       "rootUrl": "https://arenaops.in",
       "baseUrl": "https://arenaops.in"

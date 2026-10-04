@@ -1,5 +1,5 @@
 {
-  "realm": "arena",
+  "realm": "arena-dev",
   "loginTheme": "arena-login",
   "enabled": true,
   "registrationAllowed": true,
@@ -30,7 +30,6 @@
       "name": "ArenaOps BFF Admin",
       "enabled": true,
       "publicClient": false,
-      "secret": "**********",
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false
@@ -46,23 +45,20 @@
         "http://localhost:4200/login/callback",
         "http://localhost:4201/login/callback",
         "http://127.0.0.1:4200/login/callback",
-        "http://127.0.0.1:4201/login/callback",
-        "http://192.168.0.219:4200/login/callback",
-        "http://192.168.0.219:4201/login/callback",
-        "https://arenaops.in/login/callback"
+        "http://127.0.0.1:4201/login/callback"
       ],
       "webOrigins": [
         "http://localhost:4200",
         "http://localhost:4201",
         "http://127.0.0.1:4200",
-        "http://127.0.0.1:4201",
-        "http://192.168.0.219:4200",
-        "http://192.168.0.219:4201",
-        "https://arenaops.in"
+        "http://127.0.0.1:4201"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "http://127.0.0.1:4200/##http://127.0.0.1:4201/##http://192.168.0.219:4200/##http://192.168.0.219:4201/##http://localhost:4200/##http://localhost:4201/##https://arenaops.in/"
-      }
+        "post.logout.redirect.uris": "http://localhost:4200/##http://localhost:4201/##http://127.0.0.1:4200/##http://127.0.0.1:4201/",
+        "pkce.code.challenge.method": "S256"
+      },
+      "rootUrl": "http://localhost:4200",
+      "baseUrl": "http://localhost:4200"
     }
   ],
   "users": [],

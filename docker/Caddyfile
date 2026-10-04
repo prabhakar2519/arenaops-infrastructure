@@ -1,11 +1,20 @@
 {$ARENAOPS_DOMAIN} {
-  encode zstd gzip
-
-  handle /auth/* {
-    reverse_proxy keycloak:8080
-  }
-
-  handle {
-    reverse_proxy arena-ui:80
-  }
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	# Allow only this environment's public realm and login theme assets.
+	# All admin, master, other realms and management paths fail closed.
+	route {
+		@public_auth path /auth/realms/{$KC_REALM} /auth/realms/{$KC_REALM}/* /auth/resources/*
+		reverse_proxy @public_auth keycloak:8080
+		@private_auth path /auth /auth/*
+		respond @private_auth 404
+		@api path /api /api/*
+		reverse_proxy @api arena-login:7700
+		reverse_proxy arena-ui:80
+	}
 }

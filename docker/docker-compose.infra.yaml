@@ -1,5 +1,3 @@
-name: arenaops-infrastructure
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -12,11 +10,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks: [arenaops]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 10s
       timeout: 5s
       retries: 12
-
   keycloak:
     image: quay.io/keycloak/keycloak:26.5.3
     command: start --http-enabled=true --http-relative-path=/auth --proxy-headers=xforwarded
@@ -29,36 +26,48 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/${ARENA_DB_NAME:?ARENA_DB_NAME is required}
       KC_DB_USERNAME: ${ARENA_DB_USERNAME:?ARENA_DB_USERNAME is required}
       KC_DB_PASSWORD: ${ARENA_DB_PASSWORD:?ARENA_DB_PASSWORD is required}
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?KEYCLOAK_ADMIN_USER is required}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
-      KC_HOSTNAME: https://${ARENAOPS_DOMAIN:?ARENAOPS_DOMAIN is required}/auth
-      KC_HTTP_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USERNAME:?KC_ADMIN_USERNAME is required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?KC_ADMIN_PASSWORD is required}
+      KC_HOSTNAME: ${KC_PUBLIC_URL:?KC_PUBLIC_URL is required}
+      KC_HOSTNAME_ADMIN: ${KC_BASE_URL:?KC_BASE_URL is required}
       KC_HOSTNAME_STRICT: "true"
-      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
     volumes:
       - ../keycloak/themes:/opt/keycloak/themes:ro
     ports:
-      - "127.0.0.1:9091:8080"
+      - "127.0.0.1:${KC_LOCAL_PORT:?KC_LOCAL_PORT is required}:8080"
     networks: [arenaops]
-
+    healthcheck:
+      test: [CMD-SHELL, "{ printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 24
   caddy:
     image: caddy:2.8-alpine
+    profiles: [edge]
     restart: unless-stopped
     environment:
       ARENAOPS_DOMAIN: ${ARENAOPS_DOMAIN:?ARENAOPS_DOMAIN is required}
+      KC_REALM: ${KC_REALM:?KC_REALM is required}
     ports:
-      - "80:80"
-      - "443:443"
+      - "${CADDY_BIND_IP:-127.0.0.1}:80:80"
+      - "${CADDY_BIND_IP:-127.0.0.1}:443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     networks: [arenaops]
-
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:2019/config/']
+      interval: 10s
+      timeout: 5s
+      retries: 12
 networks:
   arenaops:
-    name: arenaops
-
+    external: true
+    name: ${ARENAOPS_NETWORK:?ARENAOPS_NETWORK is required}
 volumes:
   postgres_data:
   caddy_data:
