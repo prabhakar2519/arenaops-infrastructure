@@ -17,6 +17,7 @@ This repository manages PostgreSQL, Keycloak, Caddy, isolated Docker networks an
 README.md
 docker/
   Caddyfile
+  docker-compose.edge.yaml
   docker-compose.infra.yaml
   docker-compose.dev.yaml
 keycloak/
@@ -33,6 +34,7 @@ scripts/
   remote-apply.sh
   deploy-from-actions.sh
   apply-infrastructure.sh
+  apply-edge.sh
   bootstrap-keycloak.sh
   bootstrap-keycloak.py
   dev.sh
@@ -107,7 +109,7 @@ Deployment writes SSH key, known-hosts and runtime env files under runner `/dev/
 3. Configure `sit-infrastructure` with the ten secret names above and its `CADDY_BIND_IP` variable. Ensure credentials differ from PROD.
 4. In GitHub Actions → **ArenaOps Infrastructure** → **Run workflow**, select the reviewed branch, environment **sit**, operation **validate**, and run. This validates all three configurations without SSH or deployment.
 5. Review backups/migration needs and the validation result. Run the workflow again with environment **sit**, operation **apply**, confirmation **APPLY**. Complete any Environment approval.
-6. The workflow prepares `/opt/arenaops/sit` and network `arenaops-sit`, transfers repository files, starts and waits for PostgreSQL/Keycloak, bootstraps `arena-sit`, starts Caddy and marks `/opt/arenaops/sit/state/sit-infrastructure-applied` after health checks pass.
+6. The workflow prepares `/opt/arenaops/sit`, `/opt/arenaops/edge` and both networks `arenaops-sit` / `arenaops-prod`, transfers repository files, starts and waits for PostgreSQL/Keycloak, bootstraps `arena-sit`, applies the shared Caddy project and marks `/opt/arenaops/sit/state/sit-infrastructure-applied` after health checks pass.
 7. Inspect the public realm discovery URL `https://sit.arenaops.in/auth/realms/arena-sit/.well-known/openid-configuration`. Requests under `/auth/admin` and `/auth/realms/master` must return 404. The application routes return 502 until the SIT application stack is attached.
 
 For approved operator-driven application of an already copied checkout, the equivalent remote command is:
@@ -119,7 +121,7 @@ ARENAOPS_INFRA_ENV_FILE=/dev/shm/operator-runtime.env \
 # Operator is responsible for mode 0600 and cleanup of this manually created file.
 ```
 
-The application's separate repository currently targets `arenaops`, `/opt/arenaops/app` and production state. **Before deploying applications**, update it to separate SIT/PROD project names, paths, state, realm URLs and credentials, and join the corresponding external network. Use aliases `arena-ui` (port 80), `arena-login` (port 7700), and `arena-core` as needed; publish no application ports. Use a Keycloak database distinct from application tables if the app requires its own database schema. That application change is outside this repository.
+The application repository uses projects `arenaops-sit-app` and `arenaops-prod-app`, environment-specific paths and credentials, and the corresponding single external network. Its explicit aliases are `<env>-arena-ui`, `<env>-arena-login`, and `<env>-arena-core`; internal Keycloak/database calls use `<env>-keycloak` and `<env>-postgres`. Publish no application ports. Keycloak and application database/schema provisioning remains an operator prerequisite.
 
 ## PROD preparation (do not deploy yet)
 
@@ -127,29 +129,33 @@ Prepare its own VPS/bind IP and DNS `arenaops.in`, configure `production-infrast
 
 ## Networks, persistence and Caddy
 
-`prepare-vps.sh sit|prod` creates only the selected external network and directories, and stores no credentials. DEV creates its own external network automatically. Application and infrastructure projects communicate on `arenaops-sit` or `arenaops-prod`; never attach a stack to both networks. Named volumes are scoped by project:
+`prepare-vps.sh sit|prod` creates the selected environment directories plus `/opt/arenaops/edge/docker` and both external networks. It stores no credentials. DEV remains separate on `arenaops-dev`. Only Caddy joins both SIT and PROD networks; environment services each join exactly one.
 
 ```text
-arenaops-dev_postgres_data
-arenaops-sit_postgres_data
-arenaops-prod_postgres_data
+Internet -> arenaops-edge-caddy :80/:443 (project arenaops-edge)
+  sit.arenaops.in -> arenaops-sit -> sit-arena-ui / sit-arena-login / sit-keycloak
+  arenaops.in     -> arenaops-prod -> prod-arena-ui / prod-arena-login / prod-keycloak
+  private DBs: sit-postgres on arenaops-sit; prod-postgres on arenaops-prod
 ```
 
-Caddy data/config volumes are similarly scoped. PostgreSQL persists across container recreation and ordinary `compose down`; never use `down --volumes` remotely. A credential change does not automatically change the password in an existing PostgreSQL volume: plan database rotation separately.
+| Host | UI (remaining paths) | `/api` and `/api/*` | Allowed realm under `/auth/realms/` |
+| --- | --- | --- | --- |
+| `sit.arenaops.in` | `sit-arena-ui:80` | `sit-arena-login:7700` | `arena-sit` -> `sit-keycloak:8080` |
+| `arenaops.in` | `prod-arena-ui:80` | `prod-arena-login:7700` | `arena` -> `prod-keycloak:8080` |
 
-Each remote environment has its own Caddy instance, TLS certificate state and bind IPv4 address. **On one VPS, assign distinct local public IPv4 addresses to SIT and PROD.** Two instances cannot bind the same address on TCP 80/443. Separate VPSs can use their own respective IP addresses. This design avoids shared proxy/network state. One-IP hosting would require a separately reviewed shared ingress architecture and is not supported by this configuration.
+`/auth/resources/*` goes to the hostname's Keycloak. All remaining `/auth` paths return 404, including admin, master and the opposite environment's realm. Root `/health`, `/metrics`, `/admin`, `/management` and descendants also return 404. Paths are preserved. HTTPS certificates and HTTP redirects for both hosts are automatic; HSTS, content-type/referrer headers and Caddy's standard forwarded headers remain enabled.
 
-Caddy terminates HTTPS and redirects HTTP to HTTPS. It preserves paths, forwards the standard `X-Forwarded-*` headers and applies HSTS, content-type and referrer headers:
+`docker/docker-compose.edge.yaml` owns the only Caddy listener, container `arenaops-edge-caddy`, and persistent volumes `arenaops-edge-caddy-data` / `arenaops-edge-caddy-config`. Set the **same** `CADDY_BIND_IP` in both GitHub infrastructure environments to the VPS bind address (or `0.0.0.0`). Application and infrastructure projects are `arenaops-<env>-app` and `arenaops-<env>`; DB volumes remain `arenaops-<env>_postgres_data`. Environment containers and explicit DNS aliases use `sit-` or `prod-` prefixes. Compose logical service keys retain automatic local aliases, but **no proxy or application upstream uses those ambiguous aliases**. Both explicit host routes and unique aliases prevent cross-environment selection; this is routing isolation, not isolation from a compromised shared edge.
 
-| Path | Destination |
-| --- | --- |
-| `/auth/realms/<selected realm>` and descendants | Keycloak:8080 |
-| `/auth/resources/*` | Keycloak login theme resources |
-| All other `/auth` paths, including admin/master/other realms | 404 |
-| `/api` and `/api/*` | arena-login:7700 |
-| Remaining paths | arena-ui:80 |
+PostgreSQL has no remote published ports. Keycloak publishes only loopback administration ports `127.0.0.1:19091` / `127.0.0.1:29091`; port 9000 and Caddy admin port 2019 stay unpublished. The UI refuses direct API/auth requests; the shared edge owns their routing. DB credentials and client secrets continue to come from GitHub environment secrets through temporary runtime files, never the shared Caddy configuration.
 
-Only TCP 80/443 are published on the configured VPS IP. PostgreSQL has no remote host port. Keycloak binds only `127.0.0.1:19091` (SIT) or `127.0.0.1:29091` (PROD). Management port 9000 and Caddy admin port 2019 are not published. Caddy health means its local config API is alive; it does not prove application readiness or successful DNS/TLS issuance.
+Either infrastructure apply validates its environment and updates the same canonical edge files under `/opt/arenaops/edge/docker`. The workflow serializes both environments with one concurrency group; `apply-edge.sh` also uses a VPS-wide `flock`, waits for Caddy health, then reloads the file explicitly. Both network names exist before the second environment is deployed; its host returns 502 until its services exist. Environment rollback does not roll back the shared edge: review shared configuration changes for both hosts.
+
+### First shared-edge migration (operator action; not performed)
+
+Back up both database volumes and existing Caddy certificate/config volumes. Stop and retire the old per-environment Caddy containers so they release 80/443; do not stop or remove PostgreSQL/Keycloak volumes. Review migration of old Caddy data into the new shared volume or allow fresh automatic issuance (consider certificate rate limits). Apply this infrastructure revision and the matching application revision for both environments to establish the new aliases. No script automatically removes old proxy containers or migrates persistent data.
+
+Point both DNS names at this VPS, permit inbound TCP 80/443, configure the shared bind address identically, and retain protected GitHub environments. Existing container renames may require recreation; plan a maintenance window. Validate real HTTPS, discovery, login/callbacks and application health after deployment. Caddy health validates its admin API, not DNS, certificate issuance or upstream readiness. PostgreSQL password changes require separate rotation for existing volumes; never use remote `down --volumes`.
 
 ## Keycloak bootstrap and administration
 

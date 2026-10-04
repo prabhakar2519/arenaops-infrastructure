@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment == 'sit' && 'sit-infrastructure' || 'production-infrastructure' }}
     concurrency:
-      group: arenaops-${{ inputs.environment }}-infrastructure
+      group: arenaops-shared-vps-infrastructure
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4

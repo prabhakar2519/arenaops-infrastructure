@@ -13,7 +13,7 @@ fi
 compose config --quiet
 # Validate proxy before making infrastructure changes. No ports are published by run.
 if [[ "$ARENA_ENV" != dev ]]; then
-  compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+  docker compose --env-file /dev/null -p arenaops-edge -f "$root_dir/docker/docker-compose.edge.yaml" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 fi
 if [[ "$ARENA_ENV" == dev ]]; then
   docker network inspect "$ARENAOPS_NETWORK" >/dev/null 2>&1 || docker network create "$ARENAOPS_NETWORK" >/dev/null
@@ -23,7 +23,7 @@ fi
 compose up -d --wait --wait-timeout 360 postgres keycloak
 "$root_dir/scripts/bootstrap-keycloak.sh" "$root_dir/keycloak/realm/arena-realm.$ARENA_ENV.template.json"
 if [[ "$ARENA_ENV" != dev ]]; then
-  compose --profile edge up -d --wait --wait-timeout 120 caddy
+  "$root_dir/scripts/apply-edge.sh"
   install -d -m 0750 "$root_dir/state"
   date -u +'%Y-%m-%dT%H:%M:%SZ' > "$root_dir/state/$ARENA_ENV-infrastructure-applied"
 fi

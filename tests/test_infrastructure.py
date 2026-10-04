@@ -35,7 +35,7 @@ class InfrastructureTests(unittest.TestCase):
                            '-f', str(ROOT / 'docker/docker-compose.infra.yaml')]
                 if environment == 'dev':
                     command += ['-f', str(ROOT / 'docker/docker-compose.dev.yaml')]
-                result = subprocess.run(command + ['--profile', 'edge', 'config', '--format', 'json'], env=env,
+                result = subprocess.run(command + ['config', '--format', 'json'], env=env,
                                         check=True, capture_output=True, text=True)
                 composed = json.loads(result.stdout)
                 volume = composed['volumes']['postgres_data']['name']
@@ -48,10 +48,32 @@ class InfrastructureTests(unittest.TestCase):
                 self.assertEqual(str(services['keycloak']['ports'][0]['published']), port)
                 if environment != 'dev':
                     self.assertNotIn('ports', services['postgres'])
-                for service in services.values():
+                self.assertEqual(set(services), {'postgres', 'keycloak'})
+                for name, service in services.items():
+                    self.assertEqual(service['container_name'], environment + '-' + name)
+                    self.assertEqual(set(service['networks']), {'arenaops'})
+                    self.assertIn(environment + '-' + name, service['networks']['arenaops']['aliases'])
                     self.assertIn('healthcheck', service)
                     self.assertEqual(service['restart'], 'unless-stopped')
                 self.assertEqual(services['keycloak']['environment']['KC_BOOTSTRAP_ADMIN_PASSWORD'], 'validation')
+
+    def test_shared_edge_networks_ports_and_persistent_volumes(self):
+        result = subprocess.run(['docker', 'compose', '--env-file', '/dev/null', '-f',
+            str(ROOT / 'docker/docker-compose.edge.yaml'), 'config', '--format', 'json'],
+            env=dict(os.environ, CADDY_BIND_IP='127.0.0.1'), check=True, capture_output=True, text=True)
+        composed = json.loads(result.stdout)
+        self.assertEqual(composed['name'], 'arenaops-edge')
+        self.assertEqual(set(composed['services']), {'caddy'})
+        edge = composed['services']['caddy']
+        self.assertEqual(edge['container_name'], 'arenaops-edge-caddy')
+        self.assertEqual(set(edge['networks']), {'sit', 'prod'})
+        self.assertEqual({str(p['published']) for p in edge['ports']}, {'80', '443'})
+        for environment in ('sit', 'prod'):
+            self.assertEqual(composed['networks'][environment]['name'], 'arenaops-' + environment)
+            self.assertTrue(composed['networks'][environment]['external'])
+        self.assertEqual(composed['volumes']['caddy_data']['name'], 'arenaops-edge-caddy-data')
+        self.assertIn('flock 9', (ROOT / 'scripts/apply-edge.sh').read_text())
+        self.assertIn('arenaops-shared-vps-infrastructure', (ROOT / '.github/workflows/infrastructure.yaml').read_text())
 
     def test_fail_fast_invalid_and_missing_configuration(self):
         for overrides in ({'ARENA_ENV': 'production'}, {'KC_BFF_CLIENT_SECRET': ''},
@@ -89,9 +111,12 @@ class InfrastructureTests(unittest.TestCase):
                 self.assertEqual(data['sslRequired'], 'external')
         caddy = (ROOT / 'docker/Caddyfile').read_text()
         self.assertIn('respond @private_auth 404', caddy)
-        self.assertLess(caddy.index('respond @private_auth'), caddy.index('reverse_proxy arena-ui'))
-        self.assertIn('/auth/realms/{$KC_REALM}/*', caddy)
-        self.assertIn('arena-login:7700', caddy)
+        self.assertLess(caddy.index('respond @private_auth'), caddy.index('reverse_proxy sit-arena-ui'))
+        for environment, realm in [('sit', 'arena-sit'), ('prod', 'arena')]:
+            self.assertIn('/auth/realms/' + realm + '/*', caddy)
+            for service, port in [('keycloak', 8080), ('arena-login', 7700), ('arena-ui', 80)]:
+                self.assertIn(environment + '-' + service + ':' + str(port), caddy)
+        self.assertNotIn('{$', caddy)
         self.assertNotIn('reverse_proxy keycloak', caddy) # Must always have a matcher.
 
     def test_workflow_is_manual_and_has_separate_targets(self):

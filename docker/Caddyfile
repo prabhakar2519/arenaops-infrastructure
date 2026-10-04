@@ -1,4 +1,5 @@
-{$ARENAOPS_DOMAIN} {
+# One edge proxy, two explicit hosts. Never use shared generic Docker aliases.
+(edge_headers) {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000"
@@ -6,15 +7,28 @@
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
 	}
-	# Allow only this environment's public realm and login theme assets.
-	# All admin, master, other realms and management paths fail closed.
+}
+sit.arenaops.in {
+	import edge_headers
 	route {
-		@public_auth path /auth/realms/{$KC_REALM} /auth/realms/{$KC_REALM}/* /auth/resources/*
-		reverse_proxy @public_auth keycloak:8080
-		@private_auth path /auth /auth/*
+		@public_auth path /auth/realms/arena-sit /auth/realms/arena-sit/* /auth/resources/*
+		reverse_proxy @public_auth sit-keycloak:8080
+		@private_auth path /auth /auth/* /health /health/* /metrics /metrics/* /admin /admin/* /management /management/*
 		respond @private_auth 404
 		@api path /api /api/*
-		reverse_proxy @api arena-login:7700
-		reverse_proxy arena-ui:80
+		reverse_proxy @api sit-arena-login:7700
+		reverse_proxy sit-arena-ui:80
+	}
+}
+arenaops.in {
+	import edge_headers
+	route {
+		@public_auth path /auth/realms/arena /auth/realms/arena/* /auth/resources/*
+		reverse_proxy @public_auth prod-keycloak:8080
+		@private_auth path /auth /auth/* /health /health/* /metrics /metrics/* /admin /admin/* /management /management/*
+		respond @private_auth 404
+		@api path /api /api/*
+		reverse_proxy @api prod-arena-login:7700
+		reverse_proxy prod-arena-ui:80
 	}
 }

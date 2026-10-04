@@ -1,0 +1,32 @@
+name: arenaops-edge
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: arenaops-edge-caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_BIND_IP:?CADDY_BIND_IP is required}:80:80"
+      - "${CADDY_BIND_IP:?CADDY_BIND_IP is required}:443:443"
+    volumes:
+      # Mount the directory so atomic file replacement is visible to reload.
+      - ./:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [sit, prod]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:2019/config/']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+networks:
+  sit:
+    external: true
+    name: arenaops-sit
+  prod:
+    external: true
+    name: arenaops-prod
+volumes:
+  caddy_data:
+    name: arenaops-edge-caddy-data
+  caddy_config:
+    name: arenaops-edge-caddy-config
