@@ -10,7 +10,8 @@ import stat
 import sys
 
 REQUIRED = ('ARENA_DB_NAME', 'ARENA_DB_USERNAME', 'ARENA_DB_PASSWORD',
-            'KC_ADMIN_USERNAME', 'KC_ADMIN_PASSWORD', 'KC_BFF_CLIENT_SECRET')
+            'KC_ADMIN_USERNAME', 'KC_ADMIN_PASSWORD', 'KC_BFF_CLIENT_SECRET',
+            'INITIAL_ADMIN_USERNAME', 'INITIAL_ADMIN_EMAIL', 'INITIAL_ADMIN_PASSWORD')
 class ConfigError(ValueError):
     pass
 
@@ -51,8 +52,16 @@ def load_config(filename):
     if environment not in ENVIRONMENTS:
         raise ConfigError('ARENA_ENV must be dev, sit or prod')
     for key in REQUIRED:
-        if not values.get(key):
+        if not values.get(key) or not values[key].strip():
             raise ConfigError(key + ' is required')
+    if values['INITIAL_ADMIN_USERNAME'].casefold() == values['KC_ADMIN_USERNAME'].casefold():
+        raise ConfigError('Initial application admin and master administrator must have distinct usernames')
+    if not re.fullmatch(r'[A-Za-z0-9._@+-]+', values['INITIAL_ADMIN_USERNAME']):
+        raise ConfigError('Invalid initial admin username')
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', values['INITIAL_ADMIN_EMAIL']):
+        raise ConfigError('Invalid initial admin email')
+    if values['INITIAL_ADMIN_PASSWORD'].lower() in ('admin', 'password'):
+        raise ConfigError('Default initial admin passwords are forbidden')
     if environment != 'dev':
         if values['KC_ADMIN_USERNAME'].lower() == 'admin' and values['KC_ADMIN_PASSWORD'].lower() == 'admin':
             raise ConfigError('Remote admin/admin credentials are forbidden')

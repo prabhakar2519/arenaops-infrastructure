@@ -8,6 +8,7 @@ from config import REQUIRED
 
 os.umask(0o077)
 path = Path(sys.argv[1])
+# REQUIRED includes human-admin variables/password; only this temporary runtime file carries them.
 keys = ('ARENA_ENV', 'CADDY_BIND_IP') + REQUIRED
 with path.open('x') as output:
     for key in keys:
