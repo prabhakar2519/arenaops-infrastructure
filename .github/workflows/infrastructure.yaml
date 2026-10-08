@@ -47,6 +47,8 @@ jobs:
           docker run --rm --network none --entrypoint sh \
             -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7 \
             -c 'actionlint .github/workflows/infrastructure.yaml && shellcheck -x scripts/*.sh'
+      - name: Verify static theme readability as the Keycloak runtime user
+        run: ./scripts/validate-theme.sh
       - name: Validate Caddy with dummy configuration
         run: ./scripts/validate-caddy.sh
 
@@ -62,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
       # deploy-from-actions invokes prepare-vps before remote-apply. The apply
       # entrypoints ensure/inspect their external networks before Compose.
-      - name: Bootstrap VPS networks, then apply infrastructure and shared edge
+      - name: Bootstrap VPS networks and static themes, then apply infrastructure and shared edge
         shell: bash
         env:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
