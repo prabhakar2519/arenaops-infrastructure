@@ -32,6 +32,8 @@ if a[:2] == ['network', 'create']:
 if a == ['compose', 'version']:
     sys.exit(0)
 if a and a[0] == 'compose':
+    if 'exec' in a and os.environ.get('MOCK_RUNTIME_THEME_UNREADABLE') == 'yes':
+        sys.exit(12)
     required = ['arenaops-sit', 'arenaops-prod'] if 'arenaops-edge' in a else [os.environ['MOCK_SELECTED_NETWORK']]
     if not all(network in state for network in required):
         print('Compose ran before external networks existed', file=sys.stderr); sys.exit(10)
@@ -92,8 +94,10 @@ sys.exit(11)
                 scripts = root / 'scripts'; scripts.mkdir(parents=True)
                 docker = root / 'docker'; docker.mkdir()
                 edge = root / 'edge'; (edge / 'docker').mkdir(parents=True)
-                for name in ('apply-infrastructure.sh', 'ensure-networks.sh'):
+                for name in ('apply-infrastructure.sh', 'ensure-networks.sh', 'normalize-theme-permissions.sh'):
                     shutil.copy2(ROOT / 'scripts' / name, scripts / name)
+                shutil.copytree(ROOT / 'keycloak/themes', root / 'keycloak/themes')
+                shutil.copy2(ROOT / 'keycloak/theme-assets.txt', root / 'keycloak/theme-assets.txt')
                 text = (ROOT / 'scripts/apply-edge.sh').read_text().replace('edge_dir=/opt/arenaops/edge', 'edge_dir="' + str(edge) + '"')
                 (scripts / 'apply-edge.sh').write_text(text); (scripts / 'apply-edge.sh').chmod(0o755)
                 # Stub credential loading, not the deployment ordering or network helper.
@@ -116,7 +120,13 @@ compose() { docker compose -p "arenaops-$ARENA_ENV" "$@"; }
                 infra_up = next(i for i, command in enumerate(commands) if 'up' in command and 'arenaops-' + environment in command)
                 edge_up = next(i for i, command in enumerate(commands) if 'up' in command and 'arenaops-edge' in command)
                 self.assertLess(infra_up, edge_up)
-                self.assertTrue((root / 'state' / (environment + '-infrastructure-applied')).exists())
+                marker = root / 'state' / (environment + '-infrastructure-applied')
+                self.assertTrue(marker.exists())
+                marker.unlink()
+                env['MOCK_RUNTIME_THEME_UNREADABLE'] = 'yes'
+                failed = subprocess.run(['bash', str(scripts / 'apply-infrastructure.sh')], env=env, capture_output=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertFalse(marker.exists())
 
     def test_workflow_preparation_precedes_remote_apply(self):
         text = (ROOT / 'scripts/deploy-from-actions.sh').read_text()

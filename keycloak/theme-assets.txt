@@ -1,0 +1,3 @@
+arena-login/login/theme.properties
+arena-login/login/login.ftl
+arena-login/login/resources/css/arena-login-v3.css

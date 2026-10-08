@@ -41,6 +41,8 @@ scripts/
   dev.sh
   validate.sh
   validate-caddy.sh
+  normalize-theme-permissions.sh
+  validate-theme.sh
 tests/test_infrastructure.py
 ```
 
@@ -191,3 +193,13 @@ No manual Docker network commands are required. The infrastructure workflow call
 Each check runs `docker network inspect arenaops-sit` or `docker network inspect arenaops-prod`. Only a missing network triggers `docker network create --driver bridge <name>`; inspection is repeated to verify success. An existing network is preserved. Concurrent creation is accepted only when a follow-up inspection succeeds; genuine Docker errors abort deployment. No bootstrap code deletes networks or changes their existing configuration.
 
 A VPS with Docker/Compose, required host tools, SSH access and GitHub environment credentials can follow this pipeline with zero pre-existing ArenaOps networks. The scripts create the directories and network prerequisites automatically. Validation uses a fake Docker command to exercise missing, existing, failed and concurrently created networks without touching a VPS. Compose tests still verify that only Caddy attaches to both environments, PostgreSQL has no public ports, and Keycloak administration ports bind to loopback. DNS/TLS and real login remain post-deployment checks.
+
+## Static Keycloak theme permissions
+
+The Keycloak image runs as a non-root runtime user, UID 1000. Files copied by the deployment account (UID 1001 in SIT) under `umask 077` may otherwise be unreadable inside the container. After the workflow copies the repository into `/opt/arenaops/<env>`, `apply-infrastructure.sh` calls `normalize-theme-permissions.sh` on that target's `keycloak/themes` directory before any Keycloak start/recreation.
+
+Only this version-controlled static theme tree, allowlisted in `keycloak/theme-assets.txt`, is normalized: directories become 755, files 644. Static HTML/templates/CSS are intentionally world-readable and must contain no secrets. No permission changes apply to realm configuration, runtime files or other deployment paths. The secure `umask 077` stays enabled; no ownership changes or chmod 777 are used. Unlisted files, symlinks/special files and missing required assets fail deployment before startup.
+
+The helper verifies the directory/file modes and readability of `arena-login/login/theme.properties` and `arena-login/login/login.ftl`. After health-checked startup, Compose executes `test -r` for both assets inside Keycloak as its default runtime user; failure stops deployment before realm bootstrap or the infrastructure success marker. Realm creation, clients, BFF secrets and roles still use the existing master-admin bootstrap implementation.
+
+Reapplying is safe: chmod repeats the same modes, PostgreSQL is preserved, and only Keycloak is deliberately recreated so an existing cached fallback theme is cleared. This means an infrastructure apply briefly interrupts Keycloak; application-only deployments do not recreate it. The same implementation covers DEV, SIT and PROD. No live deployment was performed for this change.
