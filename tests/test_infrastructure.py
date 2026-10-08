@@ -16,7 +16,7 @@ spec.loader.exec_module(config)
 class InfrastructureTests(unittest.TestCase):
     def runtime(self, directory, environment='sit', **overrides):
         values = {k: 'validation' for k in config.REQUIRED}
-        values.update(ARENA_ENV=environment, CADDY_BIND_IP='127.0.0.1')
+        values.update(ARENA_ENV=environment, CADDY_BIND_IP='127.0.0.1', INITIAL_ADMIN_USERNAME='human-admin', INITIAL_ADMIN_EMAIL='human@example.test')
         values.update(overrides)
         path = Path(directory) / 'runtime.env'
         path.write_text(''.join(k + '=' + json.dumps(v.replace('$', '$$')) + '\n' for k, v in values.items()))
@@ -55,6 +55,8 @@ class InfrastructureTests(unittest.TestCase):
                     self.assertIn(environment + '-' + name, service['networks']['arenaops']['aliases'])
                     self.assertIn('healthcheck', service)
                     self.assertEqual(service['restart'], 'unless-stopped')
+                    self.assertNotIn('INITIAL_ADMIN_PASSWORD', service.get('environment', {}))
+                    self.assertNotIn('INITIAL_ADMIN_USERNAME', service.get('environment', {}))
                 self.assertEqual(services['keycloak']['environment']['KC_BOOTSTRAP_ADMIN_PASSWORD'], 'validation')
 
     def test_shared_edge_networks_ports_and_persistent_volumes(self):
@@ -77,7 +79,7 @@ class InfrastructureTests(unittest.TestCase):
 
     def test_fail_fast_invalid_and_missing_configuration(self):
         for overrides in ({'ARENA_ENV': 'production'}, {'KC_BFF_CLIENT_SECRET': ''},
-                          {'KC_ADMIN_USERNAME': 'admin', 'KC_ADMIN_PASSWORD': 'admin'}, {'CADDY_BIND_IP': ''}):
+                          {'KC_ADMIN_USERNAME': 'admin', 'KC_ADMIN_PASSWORD': 'admin'}, {'INITIAL_ADMIN_PASSWORD': ''}, {'INITIAL_ADMIN_EMAIL': 'invalid'}, {'INITIAL_ADMIN_USERNAME': 'validation'}, {'CADDY_BIND_IP': ''}):
             with tempfile.TemporaryDirectory() as directory:
                 with self.assertRaises(ValueError):
                     config.load_config(self.runtime(directory, **overrides))
@@ -92,7 +94,7 @@ class InfrastructureTests(unittest.TestCase):
             values = config.load_config(self.runtime(directory, KC_BFF_CLIENT_SECRET=secret))
             self.assertEqual(values['KC_BFF_CLIENT_SECRET'], secret)
             env = dict(os.environ, **{k: 'validation' for k in config.REQUIRED})
-            env.update(ARENA_ENV='sit', CADDY_BIND_IP='127.0.0.1', KC_BFF_CLIENT_SECRET=secret)
+            env.update(ARENA_ENV='sit', CADDY_BIND_IP='127.0.0.1', KC_BFF_CLIENT_SECRET=secret, INITIAL_ADMIN_USERNAME='human-admin', INITIAL_ADMIN_EMAIL='human@example.test')
             path = Path(directory) / 'generated.env'
             subprocess.run(['python3', str(ROOT / 'scripts/write-runtime-env.py'), str(path)], env=env, check=True)
             self.assertEqual(config.load_config(path)['KC_BFF_CLIENT_SECRET'], secret)
@@ -103,6 +105,7 @@ class InfrastructureTests(unittest.TestCase):
             self.assertEqual(data['realm'], realm)
             self.assertEqual(data['loginTheme'], 'arena-login')
             self.assertFalse(data['users'])
+            self.assertEqual({role['name'] for role in data['roles']['realm']}, {'ADMIN','OWNER','COACH','STAFF'})
             clients = {c['clientId']: c for c in data['clients']}
             self.assertNotIn('secret', clients['arena-bff'])
             self.assertEqual(clients['arena-ui']['attributes']['pkce.code.challenge.method'], 'S256')
@@ -141,7 +144,13 @@ class InfrastructureTests(unittest.TestCase):
         self.assertEqual(set(Path('/dev/shm').glob('arenaops-infra.*')), before)
 
     def test_bootstrap_create_preserve_roles_and_cleanup(self):
-        state = {'exists': False, 'imports': 0, 'assigned': [], 'role_posts': 0}
+        for environment in ('dev', 'sit', 'prod'):
+            with self.subTest(environment=environment):
+                self.bootstrap_case(environment)
+
+    def bootstrap_case(self, environment):
+        realm = config.ENVIRONMENTS[environment][0]
+        state = {'exists': False, 'imports': 0, 'assigned': [], 'role_posts': 0, 'app_roles': {}, 'user': None, 'user_posts': 0, 'human_roles': [], 'client_scopes': {}, 'scope_posts': 0}
         roles = [{'id': name, 'name': name} for name in ('manage-users', 'view-users', 'view-realm')]
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args): pass
@@ -151,12 +160,24 @@ class InfrastructureTests(unittest.TestCase):
             def do_GET(self):
                 path = self.path
                 if path.endswith('/.well-known/openid-configuration'): self.reply(200, {})
-                elif path == '/auth/admin/realms/arena-sit': self.reply(200 if state['exists'] else 404, {})
+                elif path == f'/auth/admin/realms/{realm}': self.reply(200 if state['exists'] else 404, {})
+                elif path.endswith('/default-client-scopes'): self.reply(200, state['client_scopes'].get(path.split('/clients/')[1].split('/')[0], []))
+                elif path.endswith('/client-scopes'): self.reply(200, [{'id': 'roles-scope', 'name': 'roles'}])
+                elif '/roles/' in path:
+                    role = state['app_roles'].get(path.split('/')[-1]); self.reply(200 if role else 404, role)
+                elif '/users?' in path: self.reply(200, [state['user']] if state['user'] else [])
+                elif path.endswith('/role-mappings/realm'): self.reply(200, state['human_roles'])
                 elif '/clients?clientId=' in path:
                     name = path.split('=')[-1]; self.reply(200, [{'clientId': name, 'id': name}])
                 elif path.endswith('/service-account-user'): self.reply(200, {'id': 'service-user'})
                 elif path.endswith('/roles'): self.reply(200, roles)
                 elif '/role-mappings/' in path: self.reply(200, state['assigned'])
+                else: self.reply(500)
+            def do_PUT(self):
+                if '/default-client-scopes/roles-scope' in self.path:
+                    client = self.path.split('/clients/')[1].split('/')[0]
+                    state['client_scopes'][client] = [{'id': 'roles-scope', 'name': 'roles'}]
+                    state['scope_posts'] += 1; self.reply(204)
                 else: self.reply(500)
             def do_POST(self):
                 body = self.rfile.read(int(self.headers['Content-Length']))
@@ -165,6 +186,12 @@ class InfrastructureTests(unittest.TestCase):
                     imported = json.loads(body)
                     state['secret'] = imported['clients'][0]['secret']
                     state['imports'] += 1; state['exists'] = True; self.reply(201)
+                elif self.path == f'/auth/admin/realms/{realm}/roles':
+                    role = json.loads(body); role['id'] = 'app-' + role['name']; state['app_roles'][role['name']] = role; self.reply(201)
+                elif self.path == f'/auth/admin/realms/{realm}/users':
+                    user = json.loads(body); user['id'] = 'initial-user'; state['user'] = user; state['user_posts'] += 1; self.reply(201)
+                elif self.path.endswith('/role-mappings/realm'):
+                    state['human_roles'] = json.loads(body); self.reply(204)
                 elif '/role-mappings/' in self.path:
                     state['assigned'] = json.loads(body); state['role_posts'] += 1; self.reply(204)
                 else: self.reply(500)
@@ -172,12 +199,29 @@ class InfrastructureTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         before = set(Path('/dev/shm').glob('arenaops-bootstrap-*'))
         try:
-            env = dict(os.environ, KC_REALM='arena-sit', KC_BASE_URL=f'http://127.0.0.1:{server.server_port}/auth',
-                       KC_ADMIN_USERNAME='validation', KC_ADMIN_PASSWORD='validation', KC_BFF_CLIENT_SECRET='validation-secret')
-            command = ['bash', str(ROOT / 'scripts/bootstrap-keycloak.sh'), str(ROOT / 'keycloak/realm/arena-realm.sit.template.json')]
-            for _ in range(2):
+            env = dict(os.environ, KC_REALM=realm, KC_BASE_URL=f'http://127.0.0.1:{server.server_port}/auth',
+                       KC_ADMIN_USERNAME='validation', KC_ADMIN_PASSWORD='validation', KC_BFF_CLIENT_SECRET='validation-secret',
+                       INITIAL_ADMIN_USERNAME='human-admin', INITIAL_ADMIN_EMAIL='human@example.test', INITIAL_ADMIN_PASSWORD='temporary-validation-secret')
+            command = ['bash', str(ROOT / 'scripts/bootstrap-keycloak.sh'), str(ROOT / f'keycloak/realm/arena-realm.{environment}.template.json')]
+            for run in range(2):
                 result = subprocess.run(command, env=env, check=True, capture_output=True, text=True)
                 self.assertNotIn('validation-secret', result.stdout + result.stderr)
+                self.assertNotIn('temporary-validation-secret', result.stdout + result.stderr)
+                if run == 0:
+                    self.assertEqual(state['user']['requiredActions'], ['UPDATE_PASSWORD'] + (['CONFIGURE_TOTP'] if environment == 'prod' else []))
+                    self.assertTrue(state['user']['credentials'][0]['temporary'])
+                    state['user']['requiredActions'] = ['custom-preserved-action']
+                    state['user']['credentials'][0]['value'] = 'human-changed-password'
+                    env['INITIAL_ADMIN_PASSWORD'] = 'different-bootstrap-password'
+
+            self.assertEqual(set(state['app_roles']), {'ADMIN', 'OWNER', 'COACH', 'STAFF'})
+            self.assertEqual(state['user_posts'], 1)
+            self.assertEqual(state['scope_posts'], 2)
+            self.assertEqual(state['user']['username'], 'human-admin')
+            self.assertTrue(state['user']['credentials'][0]['temporary'])
+            self.assertEqual(state['user']['requiredActions'], ['custom-preserved-action'])
+            self.assertEqual(state['user']['credentials'][0]['value'], 'human-changed-password')
+            self.assertEqual(state['human_roles'][0]['name'], 'ADMIN')
             self.assertEqual(state['imports'], 1)
             self.assertEqual(state['role_posts'], 1)
             self.assertEqual(state['secret'], 'validation-secret')
@@ -185,7 +229,7 @@ class InfrastructureTests(unittest.TestCase):
             result = subprocess.run(command, env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn('validation-secret', result.stdout + result.stderr)
-            env['KC_REALM'] = 'arena'
+            env['KC_REALM'] = 'arena' if realm != 'arena' else 'arena-sit'
             result = subprocess.run(command, env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn('validation-secret', result.stdout + result.stderr)

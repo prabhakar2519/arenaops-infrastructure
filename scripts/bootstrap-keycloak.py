@@ -10,12 +10,19 @@ import urllib.parse
 import urllib.request
 import sys
 
+APPLICATION_ROLES = ('ADMIN', 'OWNER', 'COACH', 'STAFF')
+
 ROLE_NAMES = {'manage-users', 'view-users', 'view-realm'}
 
 def bootstrap(template_path):
-    for key in ('KC_REALM', 'KC_BASE_URL', 'KC_ADMIN_USERNAME', 'KC_ADMIN_PASSWORD', 'KC_BFF_CLIENT_SECRET'):
+    for key in ('KC_REALM', 'KC_BASE_URL', 'KC_ADMIN_USERNAME', 'KC_ADMIN_PASSWORD', 'KC_BFF_CLIENT_SECRET', 'INITIAL_ADMIN_USERNAME', 'INITIAL_ADMIN_EMAIL', 'INITIAL_ADMIN_PASSWORD'):
         if not os.environ.get(key):
             raise RuntimeError(key + ' is required')
+    username = os.environ['INITIAL_ADMIN_USERNAME']
+    if username.casefold() == os.environ['KC_ADMIN_USERNAME'].casefold():
+        raise RuntimeError('Application and master administrators must have distinct usernames')
+    if os.environ['INITIAL_ADMIN_PASSWORD'].lower() in ('admin', 'password'):
+        raise RuntimeError('Default initial admin passwords are forbidden')
     base = os.environ['KC_BASE_URL'].rstrip('/')
     parsed = urllib.parse.urlsplit(base)
     if parsed.scheme not in ('http', 'https') or parsed.username or parsed.password:
@@ -88,6 +95,17 @@ def bootstrap(template_path):
                 raise RuntimeError('Required client missing: ' + name)
             return exact[0]['id']
 
+        # Existing realms must also retain the built-in realm-role access-token mapper.
+        for name in ('arena-ui', 'arena-bff'):
+            identifier = client_id(name)
+            _, scopes = request(admin + '/clients/' + identifier + '/default-client-scopes')
+            if not any(scope.get('name') == 'roles' for scope in scopes):
+                _, all_scopes = request(admin + '/client-scopes')
+                role_scopes = [scope for scope in all_scopes if scope.get('name') == 'roles']
+                if len(role_scopes) != 1:
+                    raise RuntimeError('Built-in roles client scope is missing')
+                request(admin + '/clients/' + identifier + '/default-client-scopes/' + role_scopes[0]['id'], 'PUT')
+
         bff = client_id('arena-bff')
         management = client_id('realm-management')
         _, service_user = request(admin + '/clients/' + bff + '/service-account-user')
@@ -103,6 +121,42 @@ def bootstrap(template_path):
         if missing:
             request(role_path, 'POST', json.dumps(missing).encode())
         print('BFF service-account roles configured')
+        app_roles = []
+        for name in APPLICATION_ROLES:
+            path = admin + '/roles/' + name
+            status, role = request(path, allowed=(404,))
+            if status == 404:
+                request(admin + '/roles', 'POST', json.dumps({'name': name}).encode(), allowed=(409,))
+                _, role = request(path)
+            app_roles.append(role)
+        admin_role = next(role for role in app_roles if role['name'] == 'ADMIN')
+        # Exact search avoids granting privileges to a partial username match.
+        query = urllib.parse.urlencode({'username': username, 'exact': 'true'})
+        def existing_user():
+            _, users = request(admin + '/users?' + query)
+            matches = [user for user in users if user.get('username', '').casefold() == username.casefold()]
+            if len(matches) > 1:
+                raise RuntimeError('Initial administrator lookup is ambiguous')
+            return matches[0] if matches else None
+        user = existing_user()
+        if user is None:
+            actions = ['UPDATE_PASSWORD'] + (['CONFIGURE_TOTP'] if realm == 'arena' else [])
+            # Credentials/actions are atomic with creation, never a later reset-password PUT.
+            body = {'username': username, 'email': os.environ['INITIAL_ADMIN_EMAIL'],
+                    'enabled': True, 'emailVerified': False, 'requiredActions': actions,
+                    'credentials': [{'type': 'password', 'value': os.environ['INITIAL_ADMIN_PASSWORD'], 'temporary': True}]}
+            request(admin + '/users', 'POST', json.dumps(body).encode(), allowed=(409,))
+            user = existing_user()
+            if not user or not user.get('id'):
+                raise RuntimeError('Initial administrator creation could not be verified')
+        if user.get('serviceAccountClientId'):
+            raise RuntimeError('Initial administrator must be a human user')
+        path = admin + '/users/' + user['id'] + '/role-mappings/realm'
+        _, assigned = request(path)
+        if not any(role.get('id') == admin_role['id'] for role in assigned):
+            request(path, 'POST', json.dumps([admin_role]).encode())
+        print('Application roles and initial administrator configured in ' + realm)
+
 
 if __name__ == '__main__':
     try:

@@ -79,4 +79,7 @@ jobs:
           KC_ADMIN_USERNAME: ${{ secrets.KC_ADMIN_USERNAME }}
           KC_ADMIN_PASSWORD: ${{ secrets.KC_ADMIN_PASSWORD }}
           KC_BFF_CLIENT_SECRET: ${{ secrets.KC_BFF_CLIENT_SECRET }}
+          INITIAL_ADMIN_USERNAME: ${{ vars.INITIAL_ADMIN_USERNAME }}
+          INITIAL_ADMIN_EMAIL: ${{ vars.INITIAL_ADMIN_EMAIL }}
+          INITIAL_ADMIN_PASSWORD: ${{ secrets.INITIAL_ADMIN_PASSWORD }}
         run: ./scripts/deploy-from-actions.sh

@@ -21,6 +21,10 @@
       {
         "name": "ADMIN",
         "description": "ArenaOps administrator"
+      },
+      {
+        "name": "COACH",
+        "description": "Sports club coach"
       }
     ]
   },
@@ -32,7 +36,15 @@
       "publicClient": false,
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": false
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
     },
     {
       "clientId": "arena-ui",
@@ -52,7 +64,15 @@
         "pkce.code.challenge.method": "S256"
       },
       "rootUrl": "https://arenaops.in",
-      "baseUrl": "https://arenaops.in"
+      "baseUrl": "https://arenaops.in",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
     }
   ],
   "users": [],

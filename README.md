@@ -79,6 +79,8 @@ Only these input names are supported (legacy `KEYCLOAK_*` names have been remove
 | `ARENA_DB_NAME`, `ARENA_DB_USERNAME`, `ARENA_DB_PASSWORD` | Required database credentials |
 | `KC_ADMIN_USERNAME`, `KC_ADMIN_PASSWORD` | Required Keycloak bootstrap admin credentials |
 | `KC_BFF_CLIENT_SECRET` | Required confidential BFF client secret |
+| `INITIAL_ADMIN_USERNAME`, `INITIAL_ADMIN_EMAIL` | Required human application administrator; GitHub Environment variables |
+| `INITIAL_ADMIN_PASSWORD` | Required temporary first-login password; GitHub Environment secret |
 | `CADDY_BIND_IP` | Required SIT/PROD VPS IPv4 address; GitHub Environment variable |
 | `ARENAOPS_INFRA_ENV_FILE` | Temporary runtime env path consumed by deployment scripts |
 
@@ -97,6 +99,7 @@ ARENA_DB_PASSWORD
 KC_ADMIN_USERNAME
 KC_ADMIN_PASSWORD
 KC_BFF_CLIENT_SECRET
+INITIAL_ADMIN_PASSWORD
 ```
 
 `VPS_SSH_HOST_KEY` is a complete trusted `known_hosts` line matching `VPS_HOST`, verified using your VPS provider console or another trusted channel. SSH host checking is mandatory. Set `CADDY_BIND_IP` as an Environment variable, not a secret. Use distinct DB names, users, passwords and admin/BFF secrets for SIT and PROD. GitHub cannot check equality across protected environments, so administrators must ensure independence.
@@ -109,7 +112,7 @@ Deployment writes SSH key, known-hosts and runtime env files under runner `/dev/
 
 1. Review and merge this change. Install Docker Engine, Compose supporting `up --wait`, Python 3, curl, jq, tar and flock on the shared VPS. Ensure the deployment account can access Docker and prepare `/opt/arenaops` through reviewed noninteractive sudo.
 2. Point `sit.arenaops.in` DNS at the SIT VPS bind IP. Permit inbound TCP 80/443 and restrict SSH to operators. PostgreSQL and Keycloak host ports must remain private. Publish no IPv6 DNS record unless IPv6 exposure is configured separately.
-3. Configure `sit-infrastructure` with the ten secret names above and its `CADDY_BIND_IP` variable. Ensure credentials differ from PROD.
+3. Configure `sit-infrastructure` with the eleven secret names above and variables `CADDY_BIND_IP`, `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_EMAIL`. Ensure credentials differ from PROD.
 4. In GitHub Actions → **ArenaOps Infrastructure** → **Run workflow**, select the reviewed branch, environment **sit**, operation **validate**, and run. This validates all three configurations without SSH or deployment.
 5. Review backups/migration needs and the validation result. Run the workflow again with environment **sit**, operation **apply**, confirmation **APPLY**. Complete any Environment approval.
 6. The workflow transfers repository files, prepares `/opt/arenaops/sit`, `/opt/arenaops/edge` and `arenaops-sit`, ensures both edge networks before Compose, starts and waits for PostgreSQL/Keycloak, bootstraps `arena-sit`, applies the shared Caddy project and marks `/opt/arenaops/sit/state/sit-infrastructure-applied` after health checks pass.
@@ -155,7 +158,7 @@ Point both DNS names at this VPS, permit inbound TCP 80/443, configure the share
 
 ## Keycloak bootstrap and administration
 
-All templates preserve OWNER/STAFF/ADMIN roles, public `arena-ui`, confidential service-account `arena-bff`, login theme and existing authentication defaults. UI uses PKCE S256. DEV uses local callbacks and `sslRequired=none`; SIT/PROD accept only their HTTPS origin and use `sslRequired=external`. No client secret or masked placeholder is stored in JSON. No exported scopes or token lifetimes existed in the repository, so Keycloak defaults remain; review these before PROD. Registration and password reset remain enabled; SMTP is still unconfigured.
+All templates preserve ADMIN/OWNER/COACH/STAFF roles, public `arena-ui`, confidential service-account `arena-bff`, login theme and existing authentication defaults. UI uses PKCE S256. DEV uses local callbacks and `sslRequired=none`; SIT/PROD accept only their HTTPS origin and use `sslRequired=external`. No client secret or masked placeholder is stored in JSON. No exported scopes or token lifetimes existed in the repository, so Keycloak defaults remain; review these before PROD. Registration and password reset remain enabled; SMTP is still unconfigured.
 
 `bootstrap-keycloak.sh TEMPLATE` requires `KC_REALM`, `KC_BASE_URL`, `KC_ADMIN_USERNAME`, `KC_ADMIN_PASSWORD`, `KC_BFF_CLIENT_SECRET`. It waits for internal readiness, authenticates to master, renders a mode-0600 temporary JSON, creates the target realm only if missing, and grants missing `manage-users`, `view-users`, `view-realm` roles. It removes temporary files on errors and never logs tokens/credentials or places them in command arguments. Reruns **do not update existing realm settings or rotate its BFF secret**; use an explicit reviewed migration/rotation. Bootstrap credentials likewise do not reset an existing admin password.
 
@@ -203,3 +206,15 @@ Only this version-controlled static theme tree, allowlisted in `keycloak/theme-a
 The helper verifies the directory/file modes and readability of `arena-login/login/theme.properties` and `arena-login/login/login.ftl`. After health-checked startup, Compose executes `test -r` for both assets inside Keycloak as its default runtime user; failure stops deployment before realm bootstrap or the infrastructure success marker. Realm creation, clients, BFF secrets and roles still use the existing master-admin bootstrap implementation.
 
 Reapplying is safe: chmod repeats the same modes, PostgreSQL is preserved, and only Keycloak is deliberately recreated so an existing cached fallback theme is cleared. This means an infrastructure apply briefly interrupts Keycloak; application-only deployments do not recreate it. The same implementation covers DEV, SIT and PROD. No live deployment was performed for this change.
+
+## Initial human application administrator
+
+Master-realm bootstrap credentials manage Keycloak infrastructure only. The environment's initial human administrator is a separate user in `arena-dev`, `arena-sit`, or `arena`; that user receives the ADMIN realm role. No application permissions come from usernames.
+
+Configure **Variables** `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_EMAIL` and **Secret** `INITIAL_ADMIN_PASSWORD` on `sit-infrastructure` / `production-infrastructure`. Supply blank local sample fields privately for DEV. Use distinct master/application usernames and non-default passwords; do not put actual credentials in JSON, static themes or documentation. These settings are required even on redeploy and travel only in the protected temporary infrastructure runtime file, not container Compose environments or browser configuration.
+
+After master-admin authentication and realm/client/service-account setup, bootstrap ensures ADMIN, OWNER, COACH and STAFF realm roles and the built-in roles default scope on arena-ui/arena-bff. It creates one initial human user if missing, with enabled=true, emailVerified=false, a temporary password and UPDATE_PASSWORD. Newly created PROD admins also require CONFIGURE_TOTP. Credentials/actions are supplied atomically in the user-creation request; subsequent deployments only ensure ADMIN role assignment and never update passwords, email, enabled state or required actions of existing users. Changing INITIAL_ADMIN_PASSWORD after the user exists does not rotate that user's password.
+
+Normal lifecycle operations create customers, owners, coaches, staff and additional administrators; this bootstrap creates none of those users. A fresh disposable SIT database rebuild can reproduce the realm, clients, roles and initial admin. Do not delete a persistent volume to reset an admin password; use private Keycloak password administration instead. First login requires a new password, plus TOTP setup in PROD. No username/password is exported in realm templates; no production deployment was performed for this change.
+
+Private CLI/API administration remains available through SSH/loopback. The previously identified browser master-realm hostname/iframe conflict is separate and remains unresolved by this initial-user bootstrap; public admin/master routes stay blocked.
