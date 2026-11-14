@@ -23,13 +23,29 @@ for environment in sit prod; do
     ) &
   done
 done
+wait_for_upstream() {
+  address="$1"; port="$2"
+  attempt=0
+  while [ "$attempt" -lt 50 ]; do
+    if nc -z -w 1 "$address" "$port" >/dev/null 2>&1; then return 0; fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  echo "Dummy upstream did not start at $address:$port" >&2
+  exit 1
+}
+for address in 127.0.0.2 127.0.0.3; do
+  for port in 8080 7700 80; do wait_for_upstream "$address" "$port"; done
+done
 sed -e 's/^sit.arenaops.in {/http:\/\/sit.arenaops.in:8081 {/' \
     -e 's/^arenaops.in {/http:\/\/arenaops.in:8081 {/' /etc/caddy/Caddyfile >/tmp/Caddyfile
 caddy run --config /tmp/Caddyfile --adapter caddyfile >/tmp/caddy.log 2>&1 &
+ready=0
 for attempt in 1 2 3 4 5; do
-  if wget -q -O /dev/null http://127.0.0.1:2019/config/ 2>/dev/null; then break; fi
+  if wget -q -O /dev/null http://127.0.0.1:2019/config/ 2>/dev/null; then ready=1; break; fi
   sleep 1
 done
+[ "$ready" -eq 1 ] || { cat /tmp/caddy.log >&2; echo 'Caddy admin API did not become ready' >&2; exit 1; }
 check() {
   host="$1"; path="$2"; expected="$3"
   wget -S -O /tmp/body --header="Host: $host" "http://127.0.0.1:8081$path" >/tmp/response 2>&1 || true
