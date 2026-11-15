@@ -1,0 +1,13 @@
+# SIT-only opt-in: install the tested academy provider before enabling this override.
+services:
+  keycloak:
+    environment:
+      ARENA_ACADEMY_REALM: arena-sit
+      ARENA_ACADEMY_EMAIL_THEME: arena-academy
+    volumes:
+      - type: bind
+        source: ../keycloak/providers/academy-keycloak-provider.jar
+        target: /opt/keycloak/providers/academy-keycloak-provider.jar
+        read_only: true
+        bind:
+          create_host_path: false

@@ -11,6 +11,10 @@ compose() {
   # Values are already parsed/exported; an empty env file avoids ambient .env reads.
   local -a files=(-f "$root_dir/docker/docker-compose.infra.yaml")
   if [[ "$ARENA_ENV" == dev ]]; then files+=(-f "$root_dir/docker/docker-compose.dev.yaml"); fi
+  # The staff setup provider is opt-in and installed separately from base infrastructure.
+  if [[ "$ARENA_ENV" == sit && -f "$root_dir/keycloak/providers/academy-keycloak-provider.jar" ]]; then
+    files+=(-f "$root_dir/docker/docker-compose.sit-academy.yaml")
+  fi
   docker compose --env-file /dev/null --project-name "$COMPOSE_PROJECT_NAME" \
     "${files[@]}" "$@"
 }
